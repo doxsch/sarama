@@ -261,7 +261,7 @@ func (ca *clusterAdmin) CreateTopic(topic string, detail *TopicDetail, validateO
 }
 
 func (ca *clusterAdmin) DescribeTopics(topics []string) (metadata []*TopicMetadata, err error) {
-	controller, err := ca.Controller()
+	broker, err := ca.findAnyBroker()
 	if err != nil {
 		return nil, err
 	}
@@ -277,7 +277,7 @@ func (ca *clusterAdmin) DescribeTopics(topics []string) (metadata []*TopicMetada
 		request.Version = 4
 	}
 
-	response, err := controller.GetMetadata(request)
+	response, err := broker.GetMetadata(request)
 	if err != nil {
 		return nil, err
 	}
@@ -320,7 +320,22 @@ func (ca *clusterAdmin) findAnyBroker() (*Broker, error) {
 	brokers := ca.client.Brokers()
 	if len(brokers) > 0 {
 		index := rand.Intn(len(brokers))
-		return brokers[index], nil
+		b := brokers[index]
+		DebugLogger.Printf("admin/findAnyBroker selected broker %s\n", b.addr)
+
+		err := b.Close()
+		if err != nil {
+			DebugLogger.Printf("admin/findAnyBroker close broker %s got error %v\n", b.addr, err)
+		}
+
+		_ = b.Open(ca.client.Config())
+		_, _ = b.Connected()
+
+		if b.connErr != nil {
+			return nil, errors.New("selected invalid broker")
+		}
+
+		return b, nil
 	}
 	return nil, errors.New("no available broker")
 }
