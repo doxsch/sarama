@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/rcrowley/go-metrics"
@@ -135,8 +136,13 @@ func NewBroker(addr string) *Broker {
 // waiting for the connection to complete. This means that any subsequent operations on the broker will
 // block waiting for the connection to succeed or fail. To get the effect of a fully synchronous Open call,
 // follow it by a call to Connected(). The only errors Open will return directly are ConfigurationError or
-// AlreadyConnected. If conf is nil, the result of NewConfig() is used.
+// AlreadyConnected. If conf is nil, the result of NewConfig() is used. Open also checks if the connection is broken.
+// If the connection is open but no longer works, Open closes the connection and opens it again.
 func (b *Broker) Open(conf *Config) error {
+	if b.conn != nil && b.isBroken() {
+		_ = b.Close()
+	}
+
 	if !atomic.CompareAndSwapInt32(&b.opened, 0, 1) {
 		return ErrAlreadyConnected
 	}
@@ -1599,4 +1605,26 @@ func validServerNameTLS(addr string, cfg *tls.Config) *tls.Config {
 	}
 	c.ServerName = sn
 	return c
+}
+
+// isBroken checks if the connection on the broker is still working. For this purpose it tries
+// to read from the connection. If the connection returns an EOF, ECONNRESET or EPIPE error, it is broken.
+func (b *Broker) isBroken() bool {
+	if b.conn == nil {
+		return true
+	}
+
+	defer func(conn net.Conn, t time.Time) {
+		_ = conn.SetReadDeadline(t)
+	}(b.conn, time.Now().Add(b.conf.Net.ReadTimeout))
+	_ = b.conn.SetReadDeadline(time.Now().Add(10 * time.Millisecond))
+
+	one := make([]byte, 1)
+	_, err := b.conn.Read(one)
+	if err == io.EOF || err == syscall.ECONNRESET || err == syscall.EPIPE {
+		Logger.Printf("Connection is broken on broker %s: %v", b.addr, err)
+		return true
+	}
+
+	return false
 }
