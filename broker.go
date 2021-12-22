@@ -3,6 +3,7 @@ package sarama
 import (
 	"crypto/tls"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -1607,21 +1608,20 @@ func validServerNameTLS(addr string, cfg *tls.Config) *tls.Config {
 	return c
 }
 
-// isBroken checks if the connection on the broker is still working. For this purpose it tries
-// to read from the connection. If the connection returns an EOF, ECONNRESET or EPIPE error, it is broken.
+// isBroken checks if the connection on the broker is still working. For this purpose it sends
+// an ApiVersions request. If the connection returns an EOF, ECONNRESET or EPIPE error, it is broken.
 func (b *Broker) isBroken() bool {
 	if b.conn == nil {
 		return true
 	}
 
-	defer func(conn net.Conn, t time.Time) {
-		_ = conn.SetReadDeadline(t)
-	}(b.conn, time.Now().Add(b.conf.Net.ReadTimeout))
-	_ = b.conn.SetReadDeadline(time.Now().Add(10 * time.Millisecond))
+	_, err := b.ApiVersions(&ApiVersionsRequest{
+		Version:               3,
+		ClientSoftwareName:    defaultClientSoftwareName,
+		ClientSoftwareVersion: version(),
+	})
 
-	one := make([]byte, 1)
-	_, err := b.conn.Read(one)
-	if err == io.EOF || err == syscall.ECONNRESET || err == syscall.EPIPE {
+	if err == io.EOF || errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.EPIPE) {
 		Logger.Printf("Connection is broken on broker %s: %v", b.addr, err)
 		return true
 	}
