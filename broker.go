@@ -137,8 +137,7 @@ func NewBroker(addr string) *Broker {
 // waiting for the connection to complete. This means that any subsequent operations on the broker will
 // block waiting for the connection to succeed or fail. To get the effect of a fully synchronous Open call,
 // follow it by a call to Connected(). The only errors Open will return directly are ConfigurationError or
-// AlreadyConnected. If conf is nil, the result of NewConfig() is used. Open also checks if the connection is broken.
-// If the connection is open but no longer works, Open closes the connection and opens it again.
+// AlreadyConnected. If conf is nil, the result of NewConfig() is used.
 func (b *Broker) Open(conf *Config) error {
 	if !atomic.CompareAndSwapInt32(&b.opened, 0, 1) {
 		return ErrAlreadyConnected
