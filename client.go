@@ -876,6 +876,14 @@ func (client *client) tryRefreshMetadata(topics []string, attemptsRemaining int,
 		return err
 	}
 
+	DebugLogger.Println("client/metadata check broker connections")
+	for _, broker := range client.brokers {
+		if broker.conn != nil && broker.isBroken() {
+			_ = broker.Close()
+			client.deregisterBroker(broker)
+		}
+	}
+
 	broker := client.any()
 	for ; broker != nil && !pastDeadline(0); broker = client.any() {
 		allowAutoTopicCreation := client.conf.Metadata.AllowAutoTopicCreation

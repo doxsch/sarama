@@ -140,10 +140,6 @@ func NewBroker(addr string) *Broker {
 // AlreadyConnected. If conf is nil, the result of NewConfig() is used. Open also checks if the connection is broken.
 // If the connection is open but no longer works, Open closes the connection and opens it again.
 func (b *Broker) Open(conf *Config) error {
-	if b.conn != nil && b.isBroken() {
-		_ = b.Close()
-	}
-
 	if !atomic.CompareAndSwapInt32(&b.opened, 0, 1) {
 		return ErrAlreadyConnected
 	}
@@ -1622,7 +1618,7 @@ func (b *Broker) isBroken() bool {
 	})
 
 	if err == io.EOF || errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.EPIPE) {
-		Logger.Printf("Connection is broken on broker %s: %v", b.addr, err)
+		DebugLogger.Printf("Connection is broken on broker %s: %v", b.addr, err)
 		return true
 	}
 
