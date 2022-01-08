@@ -945,8 +945,8 @@ func (client *client) tryRefreshMetadata(topics []string, attemptsRemaining int,
 }
 
 func (client *client) closeBrokenBroker() {
-	client.lock.RLock()
-	defer client.lock.RUnlock()
+	client.lock.Lock()
+	defer client.lock.Unlock()
 
 	DebugLogger.Println("client/metadata check broker connections")
 
