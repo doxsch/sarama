@@ -682,6 +682,8 @@ func (client *client) any() *Broker {
 	client.lock.RLock()
 	defer client.lock.RUnlock()
 
+	client.closeBrokenBroker()
+
 	if len(client.seedBrokers) > 0 {
 		_ = client.seedBrokers[0].Open(client.conf)
 		return client.seedBrokers[0]
@@ -876,8 +878,6 @@ func (client *client) tryRefreshMetadata(topics []string, attemptsRemaining int,
 		return err
 	}
 
-	client.closeBrokenBroker()
-
 	broker := client.any()
 	for ; broker != nil && !pastDeadline(0); broker = client.any() {
 		allowAutoTopicCreation := client.conf.Metadata.AllowAutoTopicCreation
@@ -945,13 +945,9 @@ func (client *client) tryRefreshMetadata(topics []string, attemptsRemaining int,
 }
 
 func (client *client) closeBrokenBroker() {
-	client.lock.Lock()
-	defer client.lock.Unlock()
-
 	DebugLogger.Println("client/metadata check broker connections")
 
 	for _, broker := range client.brokers {
-
 		if broker.conn != nil && broker.isBroken() {
 			_ = broker.Close()
 		}
