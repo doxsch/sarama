@@ -682,7 +682,19 @@ func (client *client) any() *Broker {
 	client.lock.RLock()
 	defer client.lock.RUnlock()
 
-	client.closeBrokenBroker()
+	DebugLogger.Println("client/metadata check broker connections")
+
+	for _, broker := range client.brokers {
+		broker.lock.Lock()
+		if broker.conn != nil {
+			broker.lock.Unlock()
+			if broker.isBroken() {
+				_ = broker.Close()
+			}
+		} else {
+			broker.lock.Unlock()
+		}
+	}
 
 	if len(client.seedBrokers) > 0 {
 		_ = client.seedBrokers[0].Open(client.conf)
@@ -942,16 +954,6 @@ func (client *client) tryRefreshMetadata(topics []string, attemptsRemaining int,
 	Logger.Println("client/metadata no available broker to send metadata request to")
 	client.resurrectDeadBrokers()
 	return retry(ErrOutOfBrokers)
-}
-
-func (client *client) closeBrokenBroker() {
-	DebugLogger.Println("client/metadata check broker connections")
-
-	for _, broker := range client.brokers {
-		if broker.conn != nil && broker.isBroken() {
-			_ = broker.Close()
-		}
-	}
 }
 
 // if no fatal error, returns a list of topics that need retrying due to ErrLeaderNotAvailable
