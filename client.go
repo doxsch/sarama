@@ -682,7 +682,7 @@ func (client *client) any() *Broker {
 	client.lock.RLock()
 	defer client.lock.RUnlock()
 
-	DebugLogger.Println("client/metadata check broker connections")
+	DebugLogger.Println("check broker connections and close broken brokers")
 
 	for _, broker := range client.brokers {
 		broker.lock.Lock()
