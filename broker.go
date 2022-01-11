@@ -1607,7 +1607,6 @@ func validServerNameTLS(addr string, cfg *tls.Config) *tls.Config {
 // an ApiVersions request. If the connection returns an EOF, ECONNRESET or EPIPE error, it is broken.
 func (b *Broker) isBroken() bool {
 	_, err := b.ApiVersions(&ApiVersionsRequest{
-		Version:               3,
 		ClientSoftwareName:    defaultClientSoftwareName,
 		ClientSoftwareVersion: version(),
 	})
