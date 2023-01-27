@@ -1702,7 +1702,7 @@ func (b *Broker) isBroken() bool {
 		ClientSoftwareVersion: version(),
 	})
 
-	if err == io.EOF || errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.EPIPE) {
+	if errors.Is(err, io.EOF) || errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.EPIPE) {
 		DebugLogger.Printf("Connection is broken on broker %s: %v", b.addr, err)
 		return true
 	}
