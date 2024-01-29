@@ -57,35 +57,42 @@ type BalanceStrategy interface {
 
 // --------------------------------------------------------------------
 
-// BalanceStrategyRange is the default and assigns partitions as ranges to consumer group members.
+// NewBalanceStrategyRange returns a range balance strategy,
+// which is the default and assigns partitions as ranges to consumer group members.
 // This follows the same logic as
 // https://kafka.apache.org/31/javadoc/org/apache/kafka/clients/consumer/RangeAssignor.html
 //
 // Example with two topics T1 and T2 with six partitions each (0..5) and two members (M1, M2):
 //
 //	M1: {T1: [0, 1, 2], T2: [0, 1, 2]}
-//	M2: {T2: [3, 4, 5], T2: [3, 4, 5]}
-var BalanceStrategyRange = &balanceStrategy{
-	name: RangeBalanceStrategyName,
-	coreFn: func(plan BalanceStrategyPlan, memberIDs []string, topic string, partitions []int32) {
-		partitionsPerConsumer := len(partitions) / len(memberIDs)
-		consumersWithExtraPartition := len(partitions) % len(memberIDs)
+//	M2: {T1: [3, 4, 5], T2: [3, 4, 5]}
+func NewBalanceStrategyRange() BalanceStrategy {
+	return &balanceStrategy{
+		name: RangeBalanceStrategyName,
+		coreFn: func(plan BalanceStrategyPlan, memberIDs []string, topic string, partitions []int32) {
+			partitionsPerConsumer := len(partitions) / len(memberIDs)
+			consumersWithExtraPartition := len(partitions) % len(memberIDs)
 
-		sort.Strings(memberIDs)
+			sort.Strings(memberIDs)
 
-		for i, memberID := range memberIDs {
-			min := i*partitionsPerConsumer + int(math.Min(float64(consumersWithExtraPartition), float64(i)))
-			extra := 0
-			if i < consumersWithExtraPartition {
-				extra = 1
+			for i, memberID := range memberIDs {
+				min := i*partitionsPerConsumer + int(math.Min(float64(consumersWithExtraPartition), float64(i)))
+				extra := 0
+				if i < consumersWithExtraPartition {
+					extra = 1
+				}
+				max := min + partitionsPerConsumer + extra
+				plan.Add(memberID, topic, partitions[min:max]...)
 			}
-			max := min + partitionsPerConsumer + extra
-			plan.Add(memberID, topic, partitions[min:max]...)
-		}
-	},
+		},
+	}
 }
 
-// BalanceStrategySticky assigns partitions to members with an attempt to preserve earlier assignments
+// Deprecated: use NewBalanceStrategyRange to avoid data race issue
+var BalanceStrategyRange = NewBalanceStrategyRange()
+
+// NewBalanceStrategySticky returns a sticky balance strategy,
+// which assigns partitions to members with an attempt to preserve earlier assignments
 // while maintain a balanced partition distribution.
 // Example with topic T with six partitions (0..5) and two members (M1, M2):
 //
@@ -97,13 +104,18 @@ var BalanceStrategyRange = &balanceStrategy{
 //	M1: {T: [0, 2]}
 //	M2: {T: [1, 3]}
 //	M3: {T: [4, 5]}
-var BalanceStrategySticky = &stickyBalanceStrategy{}
+func NewBalanceStrategySticky() BalanceStrategy {
+	return &stickyBalanceStrategy{}
+}
+
+// Deprecated: use NewBalanceStrategySticky to avoid data race issue
+var BalanceStrategySticky = NewBalanceStrategySticky()
 
 // --------------------------------------------------------------------
 
 type balanceStrategy struct {
-	name   string
 	coreFn func(plan BalanceStrategyPlan, memberIDs []string, topic string, partitions []int32)
+	name   string
 }
 
 // Name implements BalanceStrategy.
@@ -171,10 +183,7 @@ func (s *stickyBalanceStrategy) Plan(members map[string]ConsumerGroupMemberMetad
 	}
 
 	// determine if we're dealing with a completely fresh assignment, or if there's existing assignment state
-	isFreshAssignment := false
-	if len(currentAssignment) == 0 {
-		isFreshAssignment = true
-	}
+	isFreshAssignment := len(currentAssignment) == 0
 
 	// create a mapping of all current topic partitions and the consumers that can be assigned to them
 	partition2AllPotentialConsumers := make(map[topicPartitionAssignment][]string)
@@ -281,10 +290,7 @@ func strsContains(s []string, value string) bool {
 
 // Balance assignments across consumers for maximum fairness and stickiness.
 func (s *stickyBalanceStrategy) balance(currentAssignment map[string][]topicPartitionAssignment, prevAssignment map[topicPartitionAssignment]consumerGenerationPair, sortedPartitions []topicPartitionAssignment, unassignedPartitions []topicPartitionAssignment, sortedCurrentSubscriptions []string, consumer2AllPotentialPartitions map[string][]topicPartitionAssignment, partition2AllPotentialConsumers map[topicPartitionAssignment][]string, currentPartitionConsumer map[topicPartitionAssignment]string) {
-	initializing := false
-	if len(sortedCurrentSubscriptions) == 0 || len(currentAssignment[sortedCurrentSubscriptions[0]]) == 0 {
-		initializing = true
-	}
+	initializing := len(sortedCurrentSubscriptions) == 0 || len(currentAssignment[sortedCurrentSubscriptions[0]]) == 0
 
 	// assign all unassigned partitions
 	for _, partition := range unassignedPartitions {
@@ -337,11 +343,17 @@ func (s *stickyBalanceStrategy) balance(currentAssignment map[string][]topicPart
 	}
 }
 
-// BalanceStrategyRoundRobin assigns partitions to members in alternating order.
+// NewBalanceStrategyRoundRobin returns a round-robin balance strategy,
+// which assigns partitions to members in alternating order.
 // For example, there are two topics (t0, t1) and two consumer (m0, m1), and each topic has three partitions (p0, p1, p2):
 // M0: [t0p0, t0p2, t1p1]
 // M1: [t0p1, t1p0, t1p2]
-var BalanceStrategyRoundRobin = new(roundRobinBalancer)
+func NewBalanceStrategyRoundRobin() BalanceStrategy {
+	return new(roundRobinBalancer)
+}
+
+// Deprecated: use NewBalanceStrategyRoundRobin to avoid data race issue
+var BalanceStrategyRoundRobin = NewBalanceStrategyRoundRobin()
 
 type roundRobinBalancer struct{}
 
@@ -414,8 +426,8 @@ func (tp *topicAndPartition) comparedValue() string {
 }
 
 type memberAndTopic struct {
-	memberID string
 	topics   map[string]struct{}
+	memberID string
 }
 
 func (m *memberAndTopic) hasTopic(topic string) bool {
@@ -681,11 +693,8 @@ func sortPartitions(currentAssignment map[string][]topicPartitionAssignment, par
 		}
 		heap.Init(&pq)
 
-		for {
-			// loop until no consumer-group members remain
-			if pq.Len() == 0 {
-				break
-			}
+		// loop until no consumer-group members remain
+		for pq.Len() != 0 {
 			member := pq[0]
 
 			// partitions that were assigned to a different consumer last time
@@ -995,20 +1004,21 @@ func (p *partitionMovements) isLinked(src, dst string, pairs []consumerPair, cur
 	}
 
 	for _, pair := range pairs {
-		if pair.SrcMemberID == src {
-			// create a deep copy of the pairs, excluding the current pair
-			reducedSet := make([]consumerPair, len(pairs)-1)
-			i := 0
-			for _, p := range pairs {
-				if p != pair {
-					reducedSet[i] = pair
-					i++
-				}
-			}
-
-			currentPath = append(currentPath, pair.SrcMemberID)
-			return p.isLinked(pair.DstMemberID, dst, reducedSet, currentPath)
+		if pair.SrcMemberID != src {
+			continue
 		}
+		// create a deep copy of the pairs, excluding the current pair
+		reducedSet := make([]consumerPair, len(pairs)-1)
+		i := 0
+		for _, p := range pairs {
+			if p != pair {
+				reducedSet[i] = pair
+				i++
+			}
+		}
+
+		currentPath = append(currentPath, pair.SrcMemberID)
+		return p.isLinked(pair.DstMemberID, dst, reducedSet, currentPath)
 	}
 	return currentPath, false
 }
@@ -1106,9 +1116,9 @@ type assignmentPriorityQueue []*consumerGroupMember
 func (pq assignmentPriorityQueue) Len() int { return len(pq) }
 
 func (pq assignmentPriorityQueue) Less(i, j int) bool {
-	// order asssignment priority queue in descending order using assignment-count/member-id
+	// order assignment priority queue in descending order using assignment-count/member-id
 	if len(pq[i].assignments) == len(pq[j].assignments) {
-		return strings.Compare(pq[i].id, pq[j].id) > 0
+		return pq[i].id > pq[j].id
 	}
 	return len(pq[i].assignments) > len(pq[j].assignments)
 }

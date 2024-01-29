@@ -73,7 +73,7 @@ func TestSyncProducerTransactional(t *testing.T) {
 	config.Net.MaxOpenRequests = 1
 
 	metadataResponse := new(MetadataResponse)
-	metadataResponse.Version = 1
+	metadataResponse.Version = 4
 	metadataResponse.ControllerID = leader.BrokerID()
 	metadataResponse.AddBroker(leader.Addr(), leader.BrokerID())
 	metadataResponse.AddTopic("my_topic", ErrNoError)
@@ -84,11 +84,12 @@ func TestSyncProducerTransactional(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer safeClose(t, client)
 
 	findCoordinatorResponse := new(FindCoordinatorResponse)
 	findCoordinatorResponse.Coordinator = client.Brokers()[0]
 	findCoordinatorResponse.Version = 1
-	seedBroker.Returns(findCoordinatorResponse)
+	leader.Returns(findCoordinatorResponse)
 
 	initProducerIdResponse := new(InitProducerIDResponse)
 	leader.Returns(initProducerIdResponse)
@@ -270,6 +271,7 @@ func TestSyncProducerToNonExistingTopic(t *testing.T) {
 	}
 
 	metadataResponse = new(MetadataResponse)
+	metadataResponse.AddBroker(broker.Addr(), broker.BrokerID())
 	metadataResponse.AddTopic("unknown", ErrUnknownTopicOrPartition)
 	broker.Returns(metadataResponse)
 

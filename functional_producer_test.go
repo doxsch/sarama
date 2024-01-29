@@ -1,5 +1,4 @@
 //go:build functional
-// +build functional
 
 package sarama
 
@@ -14,55 +13,55 @@ import (
 	"testing"
 	"time"
 
-	toxiproxy "github.com/Shopify/toxiproxy/v2/client"
 	"github.com/rcrowley/go-metrics"
 	"github.com/stretchr/testify/require"
+
+	"github.com/IBM/sarama/internal/toxiproxy"
 )
 
 const TestBatchSize = 1000
 
 func TestFuncProducing(t *testing.T) {
-	config := NewTestConfig()
-	testProducingMessages(t, config)
+	config := NewFunctionalTestConfig()
+	testProducingMessages(t, config, MinVersion)
 }
 
 func TestFuncProducingGzip(t *testing.T) {
-	config := NewTestConfig()
+	config := NewFunctionalTestConfig()
 	config.Producer.Compression = CompressionGZIP
-	testProducingMessages(t, config)
+	testProducingMessages(t, config, MinVersion)
 }
 
 func TestFuncProducingSnappy(t *testing.T) {
-	config := NewTestConfig()
+	config := NewFunctionalTestConfig()
 	config.Producer.Compression = CompressionSnappy
-	testProducingMessages(t, config)
+	testProducingMessages(t, config, MinVersion)
 }
 
 func TestFuncProducingZstd(t *testing.T) {
-	config := NewTestConfig()
-	config.Version = V2_1_0_0
+	config := NewFunctionalTestConfig()
 	config.Producer.Compression = CompressionZSTD
-	testProducingMessages(t, config)
+	testProducingMessages(t, config, V2_1_0_0) // must be at least 2.1.0.0 for zstd
 }
 
 func TestFuncProducingNoResponse(t *testing.T) {
-	config := NewTestConfig()
+	config := NewFunctionalTestConfig()
 	config.Producer.RequiredAcks = NoResponse
-	testProducingMessages(t, config)
+	testProducingMessages(t, config, MinVersion)
 }
 
 func TestFuncProducingFlushing(t *testing.T) {
-	config := NewTestConfig()
+	config := NewFunctionalTestConfig()
 	config.Producer.Flush.Messages = TestBatchSize / 8
 	config.Producer.Flush.Frequency = 250 * time.Millisecond
-	testProducingMessages(t, config)
+	testProducingMessages(t, config, MinVersion)
 }
 
 func TestFuncMultiPartitionProduce(t *testing.T) {
 	setupFunctionalTest(t)
 	defer teardownFunctionalTest(t)
 
-	config := NewTestConfig()
+	config := NewFunctionalTestConfig()
 	config.ChannelBufferSize = 20
 	config.Producer.Flush.Frequency = 50 * time.Millisecond
 	config.Producer.Flush.Messages = 200
@@ -96,7 +95,7 @@ func TestFuncTxnProduceNoBegin(t *testing.T) {
 	setupFunctionalTest(t)
 	defer teardownFunctionalTest(t)
 
-	config := NewTestConfig()
+	config := NewFunctionalTestConfig()
 	config.ChannelBufferSize = 20
 	config.Producer.Flush.Frequency = 50 * time.Millisecond
 	config.Producer.Flush.Messages = 200
@@ -108,7 +107,6 @@ func TestFuncTxnProduceNoBegin(t *testing.T) {
 	config.Producer.Return.Errors = true
 	config.Producer.Transaction.Retry.Max = 200
 	config.Net.MaxOpenRequests = 1
-	config.Version = V0_11_0_0
 	producer, err := NewAsyncProducer(FunctionalTestEnv.KafkaBrokerAddrs, config)
 	require.NoError(t, err)
 	defer producer.Close()
@@ -123,7 +121,7 @@ func TestFuncTxnCommitNoMessages(t *testing.T) {
 	setupFunctionalTest(t)
 	defer teardownFunctionalTest(t)
 
-	config := NewTestConfig()
+	config := NewFunctionalTestConfig()
 	config.ChannelBufferSize = 20
 	config.Producer.Flush.Frequency = 50 * time.Millisecond
 	config.Producer.Flush.Messages = 200
@@ -135,7 +133,6 @@ func TestFuncTxnCommitNoMessages(t *testing.T) {
 	config.Producer.Return.Errors = true
 	config.Producer.Transaction.Retry.Max = 200
 	config.Net.MaxOpenRequests = 1
-	config.Version = V0_11_0_0
 	producer, err := NewAsyncProducer(FunctionalTestEnv.KafkaBrokerAddrs, config)
 	require.NoError(t, err)
 	defer producer.Close()
@@ -158,7 +155,7 @@ func TestFuncTxnProduce(t *testing.T) {
 	setupFunctionalTest(t)
 	defer teardownFunctionalTest(t)
 
-	config := NewTestConfig()
+	config := NewFunctionalTestConfig()
 	config.ChannelBufferSize = 20
 	config.Producer.Flush.Frequency = 50 * time.Millisecond
 	config.Producer.Flush.Messages = 200
@@ -168,7 +165,6 @@ func TestFuncTxnProduce(t *testing.T) {
 	config.Producer.Transaction.Retry.Max = 200
 	config.Consumer.IsolationLevel = ReadCommitted
 	config.Net.MaxOpenRequests = 1
-	config.Version = V0_11_0_0
 
 	consumer, err := NewConsumer(FunctionalTestEnv.KafkaBrokerAddrs, config)
 	require.NoError(t, err)
@@ -179,7 +175,7 @@ func TestFuncTxnProduce(t *testing.T) {
 	require.NoError(t, err)
 	defer pc.Close()
 
-	nonTransactionalProducer, err := NewAsyncProducer(FunctionalTestEnv.KafkaBrokerAddrs, NewTestConfig())
+	nonTransactionalProducer, err := NewAsyncProducer(FunctionalTestEnv.KafkaBrokerAddrs, NewFunctionalTestConfig())
 	require.NoError(t, err)
 	defer nonTransactionalProducer.Close()
 
@@ -212,7 +208,7 @@ func TestFuncTxnProduceWithBrokerFailure(t *testing.T) {
 	setupFunctionalTest(t)
 	defer teardownFunctionalTest(t)
 
-	config := NewTestConfig()
+	config := NewFunctionalTestConfig()
 	config.ChannelBufferSize = 20
 	config.Producer.Flush.Frequency = 50 * time.Millisecond
 	config.Producer.Flush.Messages = 200
@@ -222,7 +218,6 @@ func TestFuncTxnProduceWithBrokerFailure(t *testing.T) {
 	config.Producer.Transaction.Retry.Max = 200
 	config.Consumer.IsolationLevel = ReadCommitted
 	config.Net.MaxOpenRequests = 1
-	config.Version = V0_11_0_0
 
 	consumer, err := NewConsumer(FunctionalTestEnv.KafkaBrokerAddrs, config)
 	require.NoError(t, err)
@@ -233,7 +228,7 @@ func TestFuncTxnProduceWithBrokerFailure(t *testing.T) {
 	require.NoError(t, err)
 	defer pc.Close()
 
-	nonTransactionalProducer, err := NewAsyncProducer(FunctionalTestEnv.KafkaBrokerAddrs, NewTestConfig())
+	nonTransactionalProducer, err := NewAsyncProducer(FunctionalTestEnv.KafkaBrokerAddrs, NewFunctionalTestConfig())
 	require.NoError(t, err)
 	defer nonTransactionalProducer.Close()
 
@@ -279,7 +274,7 @@ func TestFuncTxnProduceEpochBump(t *testing.T) {
 	setupFunctionalTest(t)
 	defer teardownFunctionalTest(t)
 
-	config := NewTestConfig()
+	config := NewFunctionalTestConfig()
 	config.ChannelBufferSize = 20
 	config.Producer.Flush.Frequency = 50 * time.Millisecond
 	config.Producer.Flush.Messages = 200
@@ -289,7 +284,6 @@ func TestFuncTxnProduceEpochBump(t *testing.T) {
 	config.Producer.Transaction.Retry.Max = 200
 	config.Consumer.IsolationLevel = ReadCommitted
 	config.Net.MaxOpenRequests = 1
-	config.Version = V2_6_0_0
 
 	consumer, err := NewConsumer(FunctionalTestEnv.KafkaBrokerAddrs, config)
 	require.NoError(t, err)
@@ -300,7 +294,7 @@ func TestFuncTxnProduceEpochBump(t *testing.T) {
 	require.NoError(t, err)
 	defer pc.Close()
 
-	nonTransactionalProducer, err := NewAsyncProducer(FunctionalTestEnv.KafkaBrokerAddrs, NewTestConfig())
+	nonTransactionalProducer, err := NewAsyncProducer(FunctionalTestEnv.KafkaBrokerAddrs, NewFunctionalTestConfig())
 	require.NoError(t, err)
 	defer nonTransactionalProducer.Close()
 
@@ -348,7 +342,7 @@ func TestFuncInitProducerId3(t *testing.T) {
 	setupFunctionalTest(t)
 	defer teardownFunctionalTest(t)
 
-	config := NewTestConfig()
+	config := NewFunctionalTestConfig()
 	config.ChannelBufferSize = 20
 	config.Producer.Flush.Frequency = 50 * time.Millisecond
 	config.Producer.Flush.Messages = 200
@@ -358,7 +352,6 @@ func TestFuncInitProducerId3(t *testing.T) {
 	config.Producer.Retry.Max = 50
 	config.Consumer.IsolationLevel = ReadCommitted
 	config.Net.MaxOpenRequests = 1
-	config.Version = V2_6_0_0
 
 	producer, err := NewAsyncProducer(FunctionalTestEnv.KafkaBrokerAddrs, config)
 	require.NoError(t, err)
@@ -390,7 +383,7 @@ func TestFuncTxnProduceAndCommitOffset(t *testing.T) {
 	setupFunctionalTest(t)
 	defer teardownFunctionalTest(t)
 
-	config := NewTestConfig()
+	config := NewFunctionalTestConfig()
 	config.ChannelBufferSize = 20
 	config.Producer.Flush.Frequency = 50 * time.Millisecond
 	config.Producer.Flush.Messages = 200
@@ -401,7 +394,6 @@ func TestFuncTxnProduceAndCommitOffset(t *testing.T) {
 	config.Consumer.IsolationLevel = ReadCommitted
 	config.Consumer.Offsets.AutoCommit.Enable = false
 	config.Net.MaxOpenRequests = 1
-	config.Version = V0_11_0_0
 
 	client, err := NewClient(FunctionalTestEnv.KafkaBrokerAddrs, config)
 	require.NoError(t, err)
@@ -442,7 +434,7 @@ func TestFuncTxnProduceAndCommitOffset(t *testing.T) {
 
 	handler.started.Wait()
 
-	nonTransactionalProducer, err := NewAsyncProducer(FunctionalTestEnv.KafkaBrokerAddrs, NewTestConfig())
+	nonTransactionalProducer, err := NewAsyncProducer(FunctionalTestEnv.KafkaBrokerAddrs, NewFunctionalTestConfig())
 	require.NoError(t, err)
 	defer nonTransactionalProducer.Close()
 
@@ -489,7 +481,7 @@ func TestFuncTxnProduceMultiTxn(t *testing.T) {
 	setupFunctionalTest(t)
 	defer teardownFunctionalTest(t)
 
-	config := NewTestConfig()
+	config := NewFunctionalTestConfig()
 	config.ChannelBufferSize = 20
 	config.Producer.Flush.Frequency = 50 * time.Millisecond
 	config.Producer.Flush.Messages = 200
@@ -499,9 +491,8 @@ func TestFuncTxnProduceMultiTxn(t *testing.T) {
 	config.Producer.Transaction.Retry.Max = 200
 	config.Consumer.IsolationLevel = ReadCommitted
 	config.Net.MaxOpenRequests = 1
-	config.Version = V0_11_0_0
 
-	configSecond := NewTestConfig()
+	configSecond := NewFunctionalTestConfig()
 	configSecond.ChannelBufferSize = 20
 	configSecond.Producer.Flush.Frequency = 50 * time.Millisecond
 	configSecond.Producer.Flush.Messages = 200
@@ -511,7 +502,6 @@ func TestFuncTxnProduceMultiTxn(t *testing.T) {
 	configSecond.Producer.Retry.Max = 50
 	configSecond.Consumer.IsolationLevel = ReadCommitted
 	configSecond.Net.MaxOpenRequests = 1
-	configSecond.Version = V0_11_0_0
 
 	consumer, err := NewConsumer(FunctionalTestEnv.KafkaBrokerAddrs, config)
 	require.NoError(t, err)
@@ -522,7 +512,7 @@ func TestFuncTxnProduceMultiTxn(t *testing.T) {
 	require.NoError(t, err)
 	defer pc.Close()
 
-	nonTransactionalConfig := NewTestConfig()
+	nonTransactionalConfig := NewFunctionalTestConfig()
 	nonTransactionalConfig.Producer.Return.Successes = true
 	nonTransactionalConfig.Producer.Return.Errors = true
 
@@ -574,7 +564,7 @@ func TestFuncTxnAbortedProduce(t *testing.T) {
 	setupFunctionalTest(t)
 	defer teardownFunctionalTest(t)
 
-	config := NewTestConfig()
+	config := NewFunctionalTestConfig()
 	config.ChannelBufferSize = 20
 	config.Producer.Flush.Frequency = 50 * time.Millisecond
 	config.Producer.Flush.Messages = 200
@@ -585,10 +575,10 @@ func TestFuncTxnAbortedProduce(t *testing.T) {
 	config.Producer.Transaction.Retry.Max = 200
 	config.Consumer.IsolationLevel = ReadCommitted
 	config.Net.MaxOpenRequests = 1
-	config.Version = V0_11_0_0
 
 	client, err := NewClient(FunctionalTestEnv.KafkaBrokerAddrs, config)
 	require.NoError(t, err)
+	defer client.Close()
 
 	consumer, err := NewConsumerFromClient(client)
 	require.NoError(t, err)
@@ -599,7 +589,7 @@ func TestFuncTxnAbortedProduce(t *testing.T) {
 	require.NoError(t, err)
 	defer pc.Close()
 
-	nonTransactionalConfig := NewTestConfig()
+	nonTransactionalConfig := NewFunctionalTestConfig()
 	nonTransactionalConfig.Producer.Return.Successes = true
 	nonTransactionalConfig.Producer.Return.Errors = true
 
@@ -645,7 +635,9 @@ func TestFuncProducingToInvalidTopic(t *testing.T) {
 	setupFunctionalTest(t)
 	defer teardownFunctionalTest(t)
 
-	producer, err := NewSyncProducer(FunctionalTestEnv.KafkaBrokerAddrs, nil)
+	config := NewFunctionalTestConfig()
+	config.Producer.Return.Successes = true
+	producer, err := NewSyncProducer(FunctionalTestEnv.KafkaBrokerAddrs, config)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -661,7 +653,7 @@ func TestFuncProducingIdempotentWithBrokerFailure(t *testing.T) {
 	setupFunctionalTest(t)
 	defer teardownFunctionalTest(t)
 
-	config := NewTestConfig()
+	config := NewFunctionalTestConfig()
 	config.Producer.Flush.Frequency = 250 * time.Millisecond
 	config.Producer.Idempotent = true
 	config.Producer.Timeout = 500 * time.Millisecond
@@ -671,7 +663,6 @@ func TestFuncProducingIdempotentWithBrokerFailure(t *testing.T) {
 	config.Producer.Return.Errors = true
 	config.Producer.RequiredAcks = WaitForAll
 	config.Net.MaxOpenRequests = 1
-	config.Version = V0_11_0_0
 
 	producer, err := NewSyncProducer(FunctionalTestEnv.KafkaBrokerAddrs, config)
 	if err != nil {
@@ -735,7 +726,7 @@ func TestFuncProducingIdempotentWithBrokerFailure(t *testing.T) {
 }
 
 func TestInterceptors(t *testing.T) {
-	config := NewTestConfig()
+	config := NewFunctionalTestConfig()
 	setupFunctionalTest(t)
 	defer teardownFunctionalTest(t)
 
@@ -748,6 +739,7 @@ func TestInterceptors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer safeClose(t, client)
 
 	initialOffset, err := client.GetOffset("test.1", 0, OffsetNewest)
 	if err != nil {
@@ -803,10 +795,9 @@ func TestInterceptors(t *testing.T) {
 		}
 	}
 	safeClose(t, consumer)
-	safeClose(t, client)
 }
 
-func testProducingMessages(t *testing.T, config *Config) {
+func testProducingMessages(t *testing.T, config *Config, minVersion KafkaVersion) {
 	setupFunctionalTest(t)
 	defer teardownFunctionalTest(t)
 
@@ -820,94 +811,113 @@ func testProducingMessages(t *testing.T, config *Config) {
 	config.Producer.Return.Successes = true
 	config.Consumer.Return.Errors = true
 
-	client, err := NewClient(FunctionalTestEnv.KafkaBrokerAddrs, config)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// Keep in mind the current offset
-	initialOffset, err := client.GetOffset("test.1", 0, OffsetNewest)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	producer, err := NewAsyncProducerFromClient(client)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	expectedResponses := TestBatchSize
-	for i := 1; i <= TestBatchSize; {
-		msg := &ProducerMessage{Topic: "test.1", Key: nil, Value: StringEncoder(fmt.Sprintf("testing %d", i))}
-		select {
-		case producer.Input() <- msg:
-			i++
-		case ret := <-producer.Errors():
-			t.Fatal(ret.Err)
-		case <-producer.Successes():
-			expectedResponses--
+	kafkaVersions := map[KafkaVersion]bool{}
+	for _, v := range []KafkaVersion{MinVersion, V0_10_0_0, V0_11_0_0, V1_0_0_0, V2_0_0_0, V2_1_0_0} {
+		if v.IsAtLeast(minVersion) {
+			kafkaVersions[v] = true
 		}
 	}
-	for expectedResponses > 0 {
-		select {
-		case ret := <-producer.Errors():
-			t.Fatal(ret.Err)
-		case <-producer.Successes():
-			expectedResponses--
-		}
-	}
-	safeClose(t, producer)
-
-	// Validate producer metrics before using the consumer minus the offset request
-	validateProducerMetrics(t, client)
-
-	master, err := NewConsumerFromClient(client)
-	if err != nil {
-		t.Fatal(err)
-	}
-	consumer, err := master.ConsumePartition("test.1", 0, initialOffset)
-	if err != nil {
-		t.Fatal(err)
+	if upper, err := ParseKafkaVersion(os.Getenv("KAFKA_VERSION")); err != nil {
+		kafkaVersions[upper] = true
 	}
 
-	for i := 1; i <= TestBatchSize; i++ {
-		select {
-		case <-time.After(10 * time.Second):
-			t.Fatal("Not received any more events in the last 10 seconds.")
+	for version := range kafkaVersions {
+		name := t.Name() + "-v" + version.String()
+		t.Run(name, func(t *testing.T) {
+			config.ClientID = name
+			config.MetricRegistry = metrics.NewRegistry()
+			checkKafkaVersion(t, version.String())
+			config.Version = version
 
-		case err := <-consumer.Errors():
-			t.Error(err)
-
-		case message := <-consumer.Messages():
-			if string(message.Value) != fmt.Sprintf("testing %d", i) {
-				t.Fatalf("Unexpected message with index %d: %s", i, message.Value)
+			client, err := NewClient(FunctionalTestEnv.KafkaBrokerAddrs, config)
+			if err != nil {
+				t.Fatal(err)
 			}
-		}
+			defer safeClose(t, client)
+
+			// Keep in mind the current offset
+			initialOffset, err := client.GetOffset("test.1", 0, OffsetNewest)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			producer, err := NewAsyncProducerFromClient(client)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			expectedResponses := TestBatchSize
+			for i := 1; i <= TestBatchSize; {
+				msg := &ProducerMessage{Topic: "test.1", Key: nil, Value: StringEncoder(fmt.Sprintf("testing %d", i))}
+				select {
+				case producer.Input() <- msg:
+					i++
+				case ret := <-producer.Errors():
+					t.Fatal(ret.Err)
+				case <-producer.Successes():
+					expectedResponses--
+				}
+			}
+			for expectedResponses > 0 {
+				select {
+				case ret := <-producer.Errors():
+					t.Fatal(ret.Err)
+				case <-producer.Successes():
+					expectedResponses--
+				}
+			}
+			safeClose(t, producer)
+
+			// Validate producer metrics before using the consumer minus the offset request
+			validateProducerMetrics(t, client)
+
+			master, err := NewConsumerFromClient(client)
+			if err != nil {
+				t.Fatal(err)
+			}
+			consumer, err := master.ConsumePartition("test.1", 0, initialOffset)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			for i := 1; i <= TestBatchSize; i++ {
+				select {
+				case <-time.After(10 * time.Second):
+					t.Fatal("Not received any more events in the last 10 seconds.")
+
+				case err := <-consumer.Errors():
+					t.Error(err)
+
+				case message := <-consumer.Messages():
+					if string(message.Value) != fmt.Sprintf("testing %d", i) {
+						t.Fatalf("Unexpected message with index %d: %s", i, message.Value)
+					}
+				}
+			}
+
+			validateConsumerMetrics(t, client)
+
+			safeClose(t, consumer)
+		})
 	}
-
-	validateConsumerMetrics(t, client)
-
-	safeClose(t, consumer)
-	safeClose(t, client)
 }
 
 // TestAsyncProducerRemoteBrokerClosed ensures that the async producer can
 // cleanly recover if network connectivity to the remote brokers is lost and
 // then subsequently resumed.
 //
-// https://github.com/Shopify/sarama/issues/2129
+// https://github.com/IBM/sarama/issues/2129
 func TestAsyncProducerRemoteBrokerClosed(t *testing.T) {
 	setupFunctionalTest(t)
 	defer teardownFunctionalTest(t)
 
-	config := NewTestConfig()
+	config := NewFunctionalTestConfig()
 	config.ClientID = t.Name()
 	config.Net.MaxOpenRequests = 1
 	config.Producer.Flush.MaxMessages = 1
 	config.Producer.Return.Successes = true
 	config.Producer.Retry.Max = 1024
 	config.Producer.Retry.Backoff = time.Millisecond * 50
-	config.Version, _ = ParseKafkaVersion(FunctionalTestEnv.KafkaVersion)
 
 	producer, err := NewAsyncProducer(
 		FunctionalTestEnv.KafkaBrokerAddrs,
@@ -999,11 +1009,21 @@ func validateProducerMetrics(t *testing.T, client Client) {
 	if compressionEnabled {
 		// We record compression ratios between [0.50,-10.00] (50-1000 with a histogram) for at least one "fake" record
 		metricValidators.registerForGlobalAndTopic("test_1", minCountHistogramValidator("compression-ratio", 1))
-		metricValidators.registerForGlobalAndTopic("test_1", minValHistogramValidator("compression-ratio", 50))
+		if client.Config().Version.IsAtLeast(V0_11_0_0) {
+			// slightly better compression with batching
+			metricValidators.registerForGlobalAndTopic("test_1", minValHistogramValidator("compression-ratio", 30))
+		} else {
+			metricValidators.registerForGlobalAndTopic("test_1", minValHistogramValidator("compression-ratio", 50))
+		}
 		metricValidators.registerForGlobalAndTopic("test_1", maxValHistogramValidator("compression-ratio", 1000))
 	} else {
 		// We record compression ratios of 1.00 (100 with a histogram) for every TestBatchSize record
-		metricValidators.registerForGlobalAndTopic("test_1", countHistogramValidator("compression-ratio", TestBatchSize))
+		if client.Config().Version.IsAtLeast(V0_11_0_0) {
+			// records will be grouped in batchSet rather than msgSet
+			metricValidators.registerForGlobalAndTopic("test_1", minCountHistogramValidator("compression-ratio", 3))
+		} else {
+			metricValidators.registerForGlobalAndTopic("test_1", countHistogramValidator("compression-ratio", TestBatchSize))
+		}
 		metricValidators.registerForGlobalAndTopic("test_1", minValHistogramValidator("compression-ratio", 100))
 		metricValidators.registerForGlobalAndTopic("test_1", maxValHistogramValidator("compression-ratio", 100))
 	}
@@ -1090,7 +1110,7 @@ func BenchmarkProducerSmallSinglePartition(b *testing.B) {
 }
 
 func BenchmarkProducerMediumSnappy(b *testing.B) {
-	conf := NewTestConfig()
+	conf := NewFunctionalTestConfig()
 	conf.Producer.Compression = CompressionSnappy
 	benchmarkProducer(b, conf, "test.1", ByteEncoder(make([]byte, 1024)))
 }

@@ -2,14 +2,17 @@ package sarama
 
 import (
 	"errors"
+	"fmt"
 	"sync/atomic"
 	"testing"
 	"time"
 )
 
-func initOffsetManagerWithBackoffFunc(t *testing.T, retention time.Duration,
-	backoffFunc func(retries, maxRetries int) time.Duration, config *Config) (om OffsetManager,
-	testClient Client, broker, coordinator *MockBroker) {
+func initOffsetManagerWithBackoffFunc(
+	t *testing.T,
+	retention time.Duration,
+	backoffFunc func(retries, maxRetries int) time.Duration, config *Config,
+) (om OffsetManager, testClient Client, broker, coordinator *MockBroker) {
 	config.Metadata.Retry.Max = 1
 	if backoffFunc != nil {
 		config.Metadata.Retry.BackoffFunc = backoffFunc
@@ -35,7 +38,7 @@ func initOffsetManagerWithBackoffFunc(t *testing.T, retention time.Duration,
 		t.Fatal(err)
 	}
 
-	broker.Returns(&ConsumerMetadataResponse{
+	coordinator.Returns(&ConsumerMetadataResponse{
 		CoordinatorID:   coordinator.BrokerID(),
 		CoordinatorHost: "127.0.0.1",
 		CoordinatorPort: coordinator.Port(),
@@ -50,12 +53,14 @@ func initOffsetManagerWithBackoffFunc(t *testing.T, retention time.Duration,
 }
 
 func initOffsetManager(t *testing.T, retention time.Duration) (om OffsetManager,
-	testClient Client, broker, coordinator *MockBroker) {
+	testClient Client, broker, coordinator *MockBroker,
+) {
 	return initOffsetManagerWithBackoffFunc(t, retention, nil, NewTestConfig())
 }
 
 func initPartitionOffsetManager(t *testing.T, om OffsetManager,
-	coordinator *MockBroker, initialOffset int64, metadata string) PartitionOffsetManager {
+	coordinator *MockBroker, initialOffset int64, metadata string,
+) PartitionOffsetManager {
 	fetchResponse := new(OffsetFetchResponse)
 	fetchResponse.AddBlock("my_topic", 0, &OffsetFetchResponseBlock{
 		Err:      ErrNoError,
@@ -74,7 +79,9 @@ func initPartitionOffsetManager(t *testing.T, om OffsetManager,
 
 func TestNewOffsetManager(t *testing.T) {
 	seedBroker := NewMockBroker(t, 1)
-	seedBroker.Returns(new(MetadataResponse))
+	metadataResponse := new(MetadataResponse)
+	metadataResponse.AddBroker(seedBroker.Addr(), seedBroker.BrokerID())
+	seedBroker.Returns(metadataResponse)
 	defer seedBroker.Close()
 
 	testClient, err := NewClient([]string{seedBroker.Addr()}, NewTestConfig())
@@ -127,6 +134,8 @@ func TestNewOffsetManagerOffsetsAutoCommit(t *testing.T) {
 				config.Consumer.Offsets.AutoCommit.Enable = tt.enable
 			}
 			om, testClient, broker, coordinator := initOffsetManagerWithBackoffFunc(t, 0, nil, config)
+			defer broker.Close()
+			defer coordinator.Close()
 			pom := initPartitionOffsetManager(t, om, coordinator, 5, "original_meta")
 
 			// Wait long enough for the test not to fail..
@@ -160,9 +169,6 @@ func TestNewOffsetManagerOffsetsAutoCommit(t *testing.T) {
 				}
 			}
 
-			broker.Close()
-			coordinator.Close()
-
 			// !! om must be closed before the pom so pom.release() is called before pom.Close()
 			safeClose(t, om)
 			safeClose(t, pom)
@@ -177,6 +183,8 @@ func TestNewOffsetManagerOffsetsManualCommit(t *testing.T) {
 	config.Consumer.Offsets.AutoCommit.Enable = false
 
 	om, testClient, broker, coordinator := initOffsetManagerWithBackoffFunc(t, 0, nil, config)
+	defer broker.Close()
+	defer coordinator.Close()
 	pom := initPartitionOffsetManager(t, om, coordinator, 5, "original_meta")
 
 	// Wait long enough for the test not to fail..
@@ -219,10 +227,6 @@ func TestNewOffsetManagerOffsetsManualCommit(t *testing.T) {
 		t.Errorf("No request received for after waiting for %v", timeout)
 	}
 
-	// Close up
-	broker.Close()
-	coordinator.Close()
-
 	// !! om must be closed before the pom so pom.release() is called before pom.Close()
 	safeClose(t, om)
 	safeClose(t, pom)
@@ -233,6 +237,8 @@ func TestNewOffsetManagerOffsetsManualCommit(t *testing.T) {
 // on first fetchInitialOffset call
 func TestOffsetManagerFetchInitialFail(t *testing.T) {
 	om, testClient, broker, coordinator := initOffsetManager(t, 0)
+	defer broker.Close()
+	defer coordinator.Close()
 
 	// Error on first fetchInitialOffset call
 	responseBlock := OffsetFetchResponseBlock{
@@ -247,7 +253,8 @@ func TestOffsetManagerFetchInitialFail(t *testing.T) {
 
 	// Refresh coordinator
 	newCoordinator := NewMockBroker(t, 3)
-	broker.Returns(&ConsumerMetadataResponse{
+	defer newCoordinator.Close()
+	coordinator.Returns(&ConsumerMetadataResponse{
 		CoordinatorID:   newCoordinator.BrokerID(),
 		CoordinatorHost: "127.0.0.1",
 		CoordinatorPort: newCoordinator.Port(),
@@ -265,9 +272,6 @@ func TestOffsetManagerFetchInitialFail(t *testing.T) {
 		t.Error(err)
 	}
 
-	broker.Close()
-	coordinator.Close()
-	newCoordinator.Close()
 	safeClose(t, pom)
 	safeClose(t, om)
 	safeClose(t, testClient)
@@ -281,6 +285,8 @@ func TestOffsetManagerFetchInitialLoadInProgress(t *testing.T) {
 		return 0
 	}
 	om, testClient, broker, coordinator := initOffsetManagerWithBackoffFunc(t, 0, backoff, NewTestConfig())
+	defer broker.Close()
+	defer coordinator.Close()
 
 	// Error on first fetchInitialOffset call
 	responseBlock := OffsetFetchResponseBlock{
@@ -305,8 +311,6 @@ func TestOffsetManagerFetchInitialLoadInProgress(t *testing.T) {
 		t.Error(err)
 	}
 
-	broker.Close()
-	coordinator.Close()
 	safeClose(t, pom)
 	safeClose(t, om)
 	safeClose(t, testClient)
@@ -318,6 +322,8 @@ func TestOffsetManagerFetchInitialLoadInProgress(t *testing.T) {
 
 func TestPartitionOffsetManagerInitialOffset(t *testing.T) {
 	om, testClient, broker, coordinator := initOffsetManager(t, 0)
+	defer broker.Close()
+	defer coordinator.Close()
 	testClient.Config().Consumer.Offsets.Initial = OffsetOldest
 
 	// Kafka returns -1 if no offset has been stored for this partition yet.
@@ -333,13 +339,13 @@ func TestPartitionOffsetManagerInitialOffset(t *testing.T) {
 
 	safeClose(t, pom)
 	safeClose(t, om)
-	broker.Close()
-	coordinator.Close()
 	safeClose(t, testClient)
 }
 
 func TestPartitionOffsetManagerNextOffset(t *testing.T) {
 	om, testClient, broker, coordinator := initOffsetManager(t, 0)
+	defer broker.Close()
+	defer coordinator.Close()
 	pom := initPartitionOffsetManager(t, om, coordinator, 5, "test_meta")
 
 	offset, meta := pom.NextOffset()
@@ -352,13 +358,13 @@ func TestPartitionOffsetManagerNextOffset(t *testing.T) {
 
 	safeClose(t, pom)
 	safeClose(t, om)
-	broker.Close()
-	coordinator.Close()
 	safeClose(t, testClient)
 }
 
 func TestPartitionOffsetManagerResetOffset(t *testing.T) {
 	om, testClient, broker, coordinator := initOffsetManager(t, 0)
+	defer broker.Close()
+	defer coordinator.Close()
 	pom := initPartitionOffsetManager(t, om, coordinator, 5, "original_meta")
 
 	ocResponse := new(OffsetCommitResponse)
@@ -379,12 +385,12 @@ func TestPartitionOffsetManagerResetOffset(t *testing.T) {
 	safeClose(t, pom)
 	safeClose(t, om)
 	safeClose(t, testClient)
-	broker.Close()
-	coordinator.Close()
 }
 
 func TestPartitionOffsetManagerResetOffsetWithRetention(t *testing.T) {
 	om, testClient, broker, coordinator := initOffsetManager(t, time.Hour)
+	defer broker.Close()
+	defer coordinator.Close()
 	pom := initPartitionOffsetManager(t, om, coordinator, 5, "original_meta")
 
 	ocResponse := new(OffsetCommitResponse)
@@ -415,12 +421,12 @@ func TestPartitionOffsetManagerResetOffsetWithRetention(t *testing.T) {
 	safeClose(t, pom)
 	safeClose(t, om)
 	safeClose(t, testClient)
-	broker.Close()
-	coordinator.Close()
 }
 
 func TestPartitionOffsetManagerMarkOffset(t *testing.T) {
 	om, testClient, broker, coordinator := initOffsetManager(t, 0)
+	defer broker.Close()
+	defer coordinator.Close()
 	pom := initPartitionOffsetManager(t, om, coordinator, 5, "original_meta")
 
 	ocResponse := new(OffsetCommitResponse)
@@ -440,12 +446,12 @@ func TestPartitionOffsetManagerMarkOffset(t *testing.T) {
 	safeClose(t, pom)
 	safeClose(t, om)
 	safeClose(t, testClient)
-	broker.Close()
-	coordinator.Close()
 }
 
 func TestPartitionOffsetManagerMarkOffsetWithRetention(t *testing.T) {
 	om, testClient, broker, coordinator := initOffsetManager(t, time.Hour)
+	defer broker.Close()
+	defer coordinator.Close()
 	pom := initPartitionOffsetManager(t, om, coordinator, 5, "original_meta")
 
 	ocResponse := new(OffsetCommitResponse)
@@ -475,12 +481,12 @@ func TestPartitionOffsetManagerMarkOffsetWithRetention(t *testing.T) {
 	safeClose(t, pom)
 	safeClose(t, om)
 	safeClose(t, testClient)
-	broker.Close()
-	coordinator.Close()
 }
 
 func TestPartitionOffsetManagerCommitErr(t *testing.T) {
 	om, testClient, broker, coordinator := initOffsetManager(t, 0)
+	defer broker.Close()
+	defer coordinator.Close()
 	pom := initPartitionOffsetManager(t, om, coordinator, 5, "meta")
 
 	// Error on one partition
@@ -489,35 +495,34 @@ func TestPartitionOffsetManagerCommitErr(t *testing.T) {
 	ocResponse.AddError("my_topic", 1, ErrNoError)
 	coordinator.Returns(ocResponse)
 
-	newCoordinator := NewMockBroker(t, 3)
-
 	// For RefreshCoordinator()
-	broker.Returns(&ConsumerMetadataResponse{
-		CoordinatorID:   newCoordinator.BrokerID(),
+	coordinator.Returns(&ConsumerMetadataResponse{
+		CoordinatorID:   coordinator.BrokerID(),
 		CoordinatorHost: "127.0.0.1",
-		CoordinatorPort: newCoordinator.Port(),
+		CoordinatorPort: coordinator.Port(),
 	})
 
 	// Nothing in response.Errors at all
 	ocResponse2 := new(OffsetCommitResponse)
-	newCoordinator.Returns(ocResponse2)
+	coordinator.Returns(ocResponse2)
 
 	// No error, no need to refresh coordinator
 
 	// Error on the wrong partition for this pom
 	ocResponse3 := new(OffsetCommitResponse)
 	ocResponse3.AddError("my_topic", 1, ErrNoError)
-	newCoordinator.Returns(ocResponse3)
-
-	// No error, no need to refresh coordinator
+	coordinator.Returns(ocResponse3)
 
 	// ErrUnknownTopicOrPartition/ErrNotLeaderForPartition/ErrLeaderNotAvailable block
 	ocResponse4 := new(OffsetCommitResponse)
 	ocResponse4.AddError("my_topic", 0, ErrUnknownTopicOrPartition)
-	newCoordinator.Returns(ocResponse4)
+	coordinator.Returns(ocResponse4)
+
+	newCoordinator := NewMockBroker(t, 3)
+	defer newCoordinator.Close()
 
 	// For RefreshCoordinator()
-	broker.Returns(&ConsumerMetadataResponse{
+	coordinator.Returns(&ConsumerMetadataResponse{
 		CoordinatorID:   newCoordinator.BrokerID(),
 		CoordinatorHost: "127.0.0.1",
 		CoordinatorPort: newCoordinator.Port(),
@@ -535,9 +540,6 @@ func TestPartitionOffsetManagerCommitErr(t *testing.T) {
 		t.Error(err)
 	}
 
-	broker.Close()
-	coordinator.Close()
-	newCoordinator.Close()
 	safeClose(t, om)
 	safeClose(t, testClient)
 }
@@ -545,6 +547,7 @@ func TestPartitionOffsetManagerCommitErr(t *testing.T) {
 // Test of recovery from abort
 func TestAbortPartitionOffsetManager(t *testing.T) {
 	om, testClient, broker, coordinator := initOffsetManager(t, 0)
+	defer broker.Close()
 	pom := initPartitionOffsetManager(t, om, coordinator, 5, "meta")
 
 	// this triggers an error in the CommitOffset request,
@@ -568,6 +571,65 @@ func TestAbortPartitionOffsetManager(t *testing.T) {
 
 	safeClose(t, pom)
 	safeClose(t, om)
-	broker.Close()
 	safeClose(t, testClient)
+}
+
+// Validate that the constructRequest() method correctly maps Sarama's default for
+// Config.Consumer.Offsets.Retention to the equivalent Kafka value.
+func TestConstructRequestRetentionTime(t *testing.T) {
+	expectedRetention := func(version KafkaVersion, retention time.Duration) int64 {
+		switch {
+		case version.IsAtLeast(V2_1_0_0):
+			// version >= 2.1.0: Client specified retention time isn't supported in the
+			// offset commit request anymore, thus the retention time field set in the
+			// OffsetCommitRequest struct should be 0.
+			return 0
+		case version.IsAtLeast(V0_9_0_0):
+			// 0.9.0 <= version < 2.1.0: Retention time *is* supported in the offset commit
+			// request. Sarama's default retention times (0) must be mapped to the Kafka
+			// default (-1). Non-zero Sarama times are converted from time.Duration to
+			// an int64 millisecond value.
+			if retention > 0 {
+				return int64(retention / time.Millisecond)
+			} else {
+				return -1
+			}
+		default:
+			// version < 0.9.0: Client specified retention time is not supported in the offset
+			// commit request, thus the retention time field set in the OffsetCommitRequest
+			// struct should be 0.
+			return 0
+		}
+	}
+
+	for _, version := range SupportedVersions {
+		for _, retention := range []time.Duration{0, time.Millisecond} {
+			name := fmt.Sprintf("version %s retention: %s", version, retention)
+			t.Run(name, func(t *testing.T) {
+				// Perform necessary setup for calling the constructRequest() method. This
+				// test-case only cares about the code path that sets the retention time
+				// field in the returned request struct.
+				conf := NewTestConfig()
+				conf.Version = version
+				conf.Consumer.Offsets.Retention = retention
+				om := &offsetManager{
+					conf: conf,
+					poms: map[string]map[int32]*partitionOffsetManager{
+						"topic": {
+							0: {
+								dirty: true,
+							},
+						},
+					},
+				}
+
+				req := om.constructRequest()
+
+				expectedRetention := expectedRetention(version, retention)
+				if req.RetentionTime != expectedRetention {
+					t.Errorf("expected retention time %d, got: %d", expectedRetention, req.RetentionTime)
+				}
+			})
+		}
+	}
 }

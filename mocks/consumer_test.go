@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Shopify/sarama"
+	"github.com/IBM/sarama"
 )
 
 func TestMockConsumerImplementsConsumerInterface(t *testing.T) {
@@ -99,7 +99,7 @@ func TestConsumerHandlesExpectationsPausingResuming(t *testing.T) {
 		t.Error("Expected sarama.ErrOutOfBrokers, found:", test0_err.Err)
 	}
 
-	if pc_test0.HighWaterMarkOffset() != 1 {
+	if pc_test0.HighWaterMarkOffset() != 0 {
 		t.Error("High water mark offset with value different from the expected: ", pc_test0.HighWaterMarkOffset())
 	}
 
@@ -112,7 +112,7 @@ func TestConsumerHandlesExpectationsPausingResuming(t *testing.T) {
 		t.Error("Message was not as expected:", test1_msg)
 	}
 
-	if pc_test1.HighWaterMarkOffset() != 2 {
+	if pc_test1.HighWaterMarkOffset() != 1 {
 		t.Error("High water mark offset with value different from the expected: ", pc_test1.HighWaterMarkOffset())
 	}
 
@@ -125,7 +125,7 @@ func TestConsumerHandlesExpectationsPausingResuming(t *testing.T) {
 		t.Error("Message was not as expected:", other0_msg)
 	}
 
-	if pc_other0.HighWaterMarkOffset() != AnyOffset+2 {
+	if pc_other0.HighWaterMarkOffset() != AnyOffset+1 {
 		t.Error("High water mark offset with value different from the expected: ", pc_other0.HighWaterMarkOffset())
 	}
 
@@ -140,7 +140,7 @@ func TestConsumerHandlesExpectationsPausingResuming(t *testing.T) {
 		t.Error("Message was not as expected:", test0_msg2)
 	}
 
-	if pc_test0.HighWaterMarkOffset() != 3 {
+	if pc_test0.HighWaterMarkOffset() != 2 {
 		t.Error("High water mark offset with value different from the expected: ", pc_test0.HighWaterMarkOffset())
 	}
 }
@@ -395,12 +395,18 @@ func TestConsumerOffsetsAreManagedCorrectlyWithSpecifiedOffset(t *testing.T) {
 	if len(trm.errors) != 0 {
 		t.Errorf("Expected to not report any errors, found: %v", trm.errors)
 	}
+
+	if pc.HighWaterMarkOffset() != message2.Offset+1 {
+		diff := pc.HighWaterMarkOffset() - message2.Offset
+		t.Errorf("Difference between highwatermarkoffset and last message offset greater than 1, got: %v", diff)
+	}
 }
 
 func TestConsumerInvalidConfiguration(t *testing.T) {
 	trm := newTestReporterMock()
 	config := NewTestConfig()
-	config.ClientID = "not a valid client ID"
+	config.Version = sarama.V0_11_0_2
+	config.ClientID = "not a valid consumer ID"
 	consumer := NewConsumer(trm, config)
 	if err := consumer.Close(); err != nil {
 		t.Error(err)
@@ -408,7 +414,7 @@ func TestConsumerInvalidConfiguration(t *testing.T) {
 
 	if len(trm.errors) != 1 {
 		t.Error("Expected to report a single error")
-	} else if !strings.Contains(trm.errors[0], "ClientID is invalid") {
+	} else if !strings.Contains(trm.errors[0], `ClientID value "not a valid consumer ID" is not valid for Kafka versions before 1.0.0`) {
 		t.Errorf("Unexpected error: %s", trm.errors[0])
 	}
 }

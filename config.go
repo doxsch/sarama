@@ -1,7 +1,6 @@
 package sarama
 
 import (
-	"compress/gzip"
 	"crypto/tls"
 	"fmt"
 	"io"
@@ -9,13 +8,16 @@ import (
 	"regexp"
 	"time"
 
+	"github.com/klauspost/compress/gzip"
 	"github.com/rcrowley/go-metrics"
 	"golang.org/x/net/proxy"
 )
 
 const defaultClientID = "sarama"
 
-var validID = regexp.MustCompile(`\A[A-Za-z0-9._-]+\z`)
+// validClientID specifies the permitted characters for a client.id when
+// connecting to Kafka versions before 1.0.0 (KIP-190)
+var validClientID = regexp.MustCompile(`\A[A-Za-z0-9._-]+\z`)
 
 // Config is used to pass multiple configuration options to Sarama's constructors.
 type Config struct {
@@ -49,6 +51,15 @@ type Config struct {
 		DialTimeout  time.Duration // How long to wait for the initial connection.
 		ReadTimeout  time.Duration // How long to wait for a response.
 		WriteTimeout time.Duration // How long to wait for a transmit.
+
+		// ResolveCanonicalBootstrapServers turns each bootstrap broker address
+		// into a set of IPs, then does a reverse lookup on each one to get its
+		// canonical hostname. This list of hostnames then replaces the
+		// original address list. Similar to the `client.dns.lookup` option in
+		// the JVM client, this is especially useful with GSSAPI, where it
+		// allows providing an alias record instead of individual broker
+		// hostnames. Defaults to false.
+		ResolveCanonicalBootstrapServers bool
 
 		TLS struct {
 			// Whether or not to use TLS when connecting to the broker
@@ -272,7 +283,6 @@ type Config struct {
 	// Consumer is the namespace for configuration related to consuming messages,
 	// used by the Consumer.
 	Consumer struct {
-
 		// Group is the namespace for configuring consumer group.
 		Group struct {
 			Session struct {
@@ -294,7 +304,7 @@ type Config struct {
 				Interval time.Duration
 			}
 			Rebalance struct {
-				// Strategy for allocating topic partitions to members (default BalanceStrategyRange)
+				// Strategy for allocating topic partitions to members.
 				// Deprecated: Strategy exists for historical compatibility
 				// and should not be used. Please use GroupStrategies.
 				Strategy BalanceStrategy
@@ -302,7 +312,7 @@ type Config struct {
 				// GroupStrategies is the priority-ordered list of client-side consumer group
 				// balancing strategies that will be offered to the coordinator. The first
 				// strategy that all group members support will be chosen by the leader.
-				// default: [BalanceStrategyRange]
+				// default: [ NewBalanceStrategyRange() ]
 				GroupStrategies []BalanceStrategy
 
 				// The maximum allowed time for each worker to join the group once a rebalance has begun.
@@ -505,7 +515,7 @@ func NewConfig() *Config {
 	c.Net.ReadTimeout = 30 * time.Second
 	c.Net.WriteTimeout = 30 * time.Second
 	c.Net.SASL.Handshake = true
-	c.Net.SASL.Version = SASLHandshakeV0
+	c.Net.SASL.Version = SASLHandshakeV1
 
 	c.Metadata.Retry.Max = 3
 	c.Metadata.Retry.Backoff = 250 * time.Millisecond
@@ -539,7 +549,7 @@ func NewConfig() *Config {
 
 	c.Consumer.Group.Session.Timeout = 10 * time.Second
 	c.Consumer.Group.Heartbeat.Interval = 3 * time.Second
-	c.Consumer.Group.Rebalance.GroupStrategies = []BalanceStrategy{BalanceStrategyRange}
+	c.Consumer.Group.Rebalance.GroupStrategies = []BalanceStrategy{NewBalanceStrategyRange()}
 	c.Consumer.Group.Rebalance.Timeout = 60 * time.Second
 	c.Consumer.Group.Rebalance.Retry.Max = 4
 	c.Consumer.Group.Rebalance.Retry.Backoff = 2 * time.Second
@@ -650,19 +660,26 @@ func (c *Config) Validate() error {
 				return ConfigurationError("Net.SASL.GSSAPI.ServiceName must not be empty when GSS-API mechanism is used")
 			}
 
-			if c.Net.SASL.GSSAPI.AuthType == KRB5_USER_AUTH {
+			switch c.Net.SASL.GSSAPI.AuthType {
+			case KRB5_USER_AUTH:
 				if c.Net.SASL.GSSAPI.Password == "" {
 					return ConfigurationError("Net.SASL.GSSAPI.Password must not be empty when GSS-API " +
 						"mechanism is used and Net.SASL.GSSAPI.AuthType = KRB5_USER_AUTH")
 				}
-			} else if c.Net.SASL.GSSAPI.AuthType == KRB5_KEYTAB_AUTH {
+			case KRB5_KEYTAB_AUTH:
 				if c.Net.SASL.GSSAPI.KeyTabPath == "" {
 					return ConfigurationError("Net.SASL.GSSAPI.KeyTabPath must not be empty when GSS-API mechanism is used" +
-						" and  Net.SASL.GSSAPI.AuthType = KRB5_KEYTAB_AUTH")
+						" and Net.SASL.GSSAPI.AuthType = KRB5_KEYTAB_AUTH")
 				}
-			} else {
-				return ConfigurationError("Net.SASL.GSSAPI.AuthType is invalid. Possible values are KRB5_USER_AUTH and KRB5_KEYTAB_AUTH")
+			case KRB5_CCACHE_AUTH:
+				if c.Net.SASL.GSSAPI.CCachePath == "" {
+					return ConfigurationError("Net.SASL.GSSAPI.CCachePath must not be empty when GSS-API mechanism is used" +
+						" and Net.SASL.GSSAPI.AuthType = KRB5_CCACHE_AUTH")
+				}
+			default:
+				return ConfigurationError("Net.SASL.GSSAPI.AuthType is invalid. Possible values are KRB5_USER_AUTH, KRB5_KEYTAB_AUTH, and KRB5_CCACHE_AUTH")
 			}
+
 			if c.Net.SASL.GSSAPI.KerberosConfigPath == "" {
 				return ConfigurationError("Net.SASL.GSSAPI.KerberosConfigPath must not be empty when GSS-API mechanism is used")
 			}
@@ -831,8 +848,11 @@ func (c *Config) Validate() error {
 	switch {
 	case c.ChannelBufferSize < 0:
 		return ConfigurationError("ChannelBufferSize must be >= 0")
-	case !validID.MatchString(c.ClientID):
-		return ConfigurationError("ClientID is invalid")
+	}
+
+	// only validate clientID locally for Kafka versions before KIP-190 was implemented
+	if !c.Version.IsAtLeast(V1_0_0_0) && !validClientID.MatchString(c.ClientID) {
+		return ConfigurationError(fmt.Sprintf("ClientID value %q is not valid for Kafka versions before 1.0.0", c.ClientID))
 	}
 
 	return nil
@@ -840,7 +860,7 @@ func (c *Config) Validate() error {
 
 func (c *Config) getDialer() proxy.Dialer {
 	if c.Net.Proxy.Enable {
-		Logger.Printf("using proxy %s", c.Net.Proxy.Dialer)
+		Logger.Println("using proxy")
 		return c.Net.Proxy.Dialer
 	} else {
 		return &net.Dialer{
